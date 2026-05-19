@@ -78,6 +78,81 @@ rviz2     # add a TF display, fixed frame = world
 
 **Note**: the Quest's proximity sensor suspends the teleop APK when nobody is wearing the headset. If `ros2 topic echo /tf` shows nothing, first check that the publisher terminal is logging non-empty `buttons: {...}` — if it's silent, put the headset on (or defeat the prox sensor).
 
+## Teleoperation
+
+`oculus_reader/teleoperate.py` plus `launch/teleoperate.launch.py` provide a full clutched-VR-teleop pipeline: the Quest controllers are mapped onto two TF reference frames that the operator drives, intended to be tracked by the robot's end effector.
+
+### What gets published
+
+Two pairs of TF frames, under a `quest_origin` parent that is itself a child of the robot's `world` frame:
+
+| Frame | Description | When it updates |
+|---|---|---|
+| `oculus_r`, `oculus_l` | Raw controller poses, every tick. | Continuously, ~20 Hz. |
+| `oculus_r_reference`, `oculus_l_reference` | The pose the robot's end effector should track. | Only while the corresponding grip button is held. |
+
+The reference frames are **clutched**: they only move when the grip button on that hand's controller is held down. When you release the grip, they freeze. When you press the grip again, the reference snaps to the **current** robot tip pose (looked up via TF) — so the robot never jumps even if it has moved between presses. Motion deltas are applied in the **parent (world) frame**, so "move your hand down in world" always means "reference moves down in world", regardless of the robot's current orientation.
+
+### Prerequisites
+
+- The robot's TF tree must publish `grasp_link` (the tip frame the references anchor to). This typically means a `robot_state_publisher` is running with the robot's URDF. Without it, the teleop node will log "Waiting for TF '<parent>' -> 'grasp_link'..." and never start.
+- The tip frame name is hard-coded as `TIP_FRAME_ID = 'grasp_link'` at the top of `teleoperate.py` — change there if your robot uses a different convention.
+
+### Launch
+
+```bash
+source enter_venv.sh --ros
+ros2 launch launch/teleoperate.launch.py
+```
+
+This brings up:
+1. A `static_transform_publisher` for `world → quest_origin`, defining where the Quest tracking frame sits relative to the robot.
+2. The `teleoperate.py` node, publishing the four TF frames listed above.
+
+### Calibration
+
+The static TF rotation in the launch file should match the **relative orientation** between the human operator and the robot at recenter time. Translation is fixed at zero — only the orientation matters for the clutch math.
+
+The default orientation assumes the operator is **behind (or to the side of) the robot, facing in the same direction as the robot** — i.e., the operator's "forward" is aligned with the robot's "forward". This is the most common stance for desktop teleop. If you instead want to **face the robot** (the operator's "forward" pointing toward the robot, opposite to the robot's "forward"), you'll need to override the quaternion or motions will feel inverted in X and Y.
+
+Calibration recipe:
+1. Stand on a fixed, marked spot near the robot.
+2. Stand still for a couple of seconds, then long-press the Quest's Oculus button to **recenter** tracking.
+3. Run the launch file.
+4. In RViz2 (fixed frame = `world`, TF display), wave the right controller and verify:
+   - "Hand up" → `oculus_r` moves up.
+   - "Hand forward" (away from your body) → `oculus_r` moves toward the robot.
+   - "Hand right" → `oculus_r` moves to your right.
+5. Hold the right **grip** and move the controller — `oculus_r_reference` should follow with no jump.
+
+Override the orientation:
+
+```bash
+ros2 launch launch/teleoperate.launch.py qx:=... qy:=... qz:=... qw:=...
+```
+
+### Button conventions
+
+Per hand, OculusReader exposes:
+
+| Button | Used for |
+|---|---|
+| Grip (`RG` / `LG`) | **Clutch** — hold to drive the reference frame. |
+| Trigger (`RTr` / `LTr`, plus analog `rightTrig` / `leftTrig`) | Reserved for gripper open/close. |
+| A / B / X / Y, joysticks | Unused so far. |
+
+### Logs you'll see
+
+```
+[INFO] [oculus_teleop]: Publishing under 'quest_origin'. Waiting for TF 'quest_origin' -> 'grasp_link'...
+[INFO] [oculus_teleop]: References initialized at 'grasp_link' pose. Waiting for Quest data...
+[INFO] [oculus_teleop]: Streaming started. Controllers detected: right, left. Hold the grip button to engage the clutch.
+[INFO] [oculus_teleop]: oculus_r_reference: clutch engaged
+[INFO] [oculus_teleop]: oculus_r_reference: clutch released
+```
+
+No per-tick spam. Clutch state changes log on each transition.
+
 -------------------
 
 # Original README from [rail-berkeley/oculus_reader](https://github.com/rail-berkeley/oculus_reader):
