@@ -82,9 +82,19 @@ rviz2     # add a TF display, fixed frame = world
 
 `oculus_reader/teleoperate.py` plus `launch/teleoperate.launch.py` provide a full clutched-VR-teleop pipeline: the Quest controllers are mapped onto two TF reference frames; while the grip is held, the node also publishes a Cartesian velocity command that drives the robot's end effector toward the reference.
 
-Because the velocity command uses the custom `moveit_pro_controllers_msgs/msg/VelocityForceCommand` type, **this part of the pipeline is intended to run inside the MoveIt Pro dev container** (where that message package is built and on PYTHONPATH). Quest connectivity (ADB) is also needed; if your container doesn't have it, install `pure-python-adb` (`pip3 install --user pure-python-adb`) and make sure `/dev/bus/usb` is passed through.
+Because the velocity command uses the custom `moveit_pro_controllers_msgs/msg/VelocityForceCommand` type, **this part of the pipeline is intended to run inside the MoveIt Pro dev container** (where that message package is built and on PYTHONPATH).
 
-### Build (inside the dev container)
+### One-time container setup
+
+Inside the container, `oculus_reader` needs `adb` plus a few small pip packages (`pure-python-adb`, `numpy`, `pyyaml`). The container is already the isolation boundary, so these are installed system-wide -- no venv. Run once per container build:
+
+```bash
+bash container_install.sh
+```
+
+The script auto-elevates with sudo if needed, is idempotent (safe to re-run), and verifies the imports at the end. If you maintain the dev container image, you can equivalently fold its contents into the Dockerfile so the deps are baked in.
+
+### Build
 
 `oculus_reader` is an `ament_python` package (see `package.xml`, `setup.cfg`, `setup.py`, `resource/oculus_reader`). Build with colcon:
 
@@ -94,7 +104,7 @@ colcon build --packages-select oculus_reader
 source install/setup.bash
 ```
 
-After that, `ros2 launch` and `ros2 run` both work:
+After that, `ros2 launch` and `ros2 run` both work in any terminal that sources the overlay -- no venv activation, no extra setup:
 
 ```bash
 ros2 launch oculus_reader teleoperate.launch.py
