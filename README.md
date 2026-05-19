@@ -80,7 +80,27 @@ rviz2     # add a TF display, fixed frame = world
 
 ## Teleoperation
 
-`oculus_reader/teleoperate.py` plus `launch/teleoperate.launch.py` provide a full clutched-VR-teleop pipeline: the Quest controllers are mapped onto two TF reference frames that the operator drives, intended to be tracked by the robot's end effector.
+`oculus_reader/teleoperate.py` plus `launch/teleoperate.launch.py` provide a full clutched-VR-teleop pipeline: the Quest controllers are mapped onto two TF reference frames; while the grip is held, the node also publishes a Cartesian velocity command that drives the robot's end effector toward the reference.
+
+Because the velocity command uses the custom `moveit_pro_controllers_msgs/msg/VelocityForceCommand` type, **this part of the pipeline is intended to run inside the MoveIt Pro dev container** (where that message package is built and on PYTHONPATH). Quest connectivity (ADB) is also needed; if your container doesn't have it, install `pure-python-adb` (`pip3 install --user pure-python-adb`) and make sure `/dev/bus/usb` is passed through.
+
+### Build (inside the dev container)
+
+`oculus_reader` is an `ament_python` package (see `package.xml`, `setup.cfg`, `setup.py`, `resource/oculus_reader`). Build with colcon:
+
+```bash
+cd /home/studio-user/user_ws        # path inside the dev container
+colcon build --packages-select oculus_reader
+source install/setup.bash
+```
+
+After that, `ros2 launch` and `ros2 run` both work:
+
+```bash
+ros2 launch oculus_reader teleoperate.launch.py
+# or, directly:
+ros2 run oculus_reader teleoperate
+```
 
 ### What gets published
 
@@ -91,23 +111,73 @@ Two pairs of TF frames, under a `quest_origin` parent that is itself a child of 
 | `oculus_r`, `oculus_l` | Raw controller poses, every tick. | Continuously, ~20 Hz. |
 | `oculus_r_reference`, `oculus_l_reference` | The pose the robot's end effector should track. | Only while the corresponding grip button is held. |
 
+Plus the velocity command:
+
+| Topic | Type | When it publishes |
+|---|---|---|
+| `/velocity_force_controller/command` | `moveit_pro_controllers_msgs/msg/VelocityForceCommand` | Every tick while the configured drive hand's clutch is engaged, plus one zero-twist on the falling edge so the robot stops promptly. |
+
 The reference frames are **clutched**: they only move when the grip button on that hand's controller is held down. When you release the grip, they freeze. When you press the grip again, the reference snaps to the **current** robot tip pose (looked up via TF) — so the robot never jumps even if it has moved between presses. Motion deltas are applied in the **parent (world) frame**, so "move your hand down in world" always means "reference moves down in world", regardless of the robot's current orientation.
 
 ### Prerequisites
 
 - The robot's TF tree must publish `grasp_link` (the tip frame the references anchor to). This typically means a `robot_state_publisher` is running with the robot's URDF. Without it, the teleop node will log "Waiting for TF '<parent>' -> 'grasp_link'..." and never start.
 - The tip frame name is hard-coded as `TIP_FRAME_ID = 'grasp_link'` at the top of `teleoperate.py` — change there if your robot uses a different convention.
+- The `velocity_force_controller` must be running on the robot (the topic `/velocity_force_controller/command` should appear in `ros2 topic list`). Otherwise commands are published but go nowhere.
 
 ### Launch
 
 ```bash
-source enter_venv.sh --ros
-ros2 launch launch/teleoperate.launch.py
+ros2 launch oculus_reader teleoperate.launch.py
 ```
 
 This brings up:
 1. A `static_transform_publisher` for `world → quest_origin`, defining where the Quest tracking frame sits relative to the robot.
-2. The `teleoperate.py` node, publishing the four TF frames listed above.
+2. The `teleoperate.py` node, publishing the four TF frames listed above and the velocity command.
+
+### Launch arguments
+
+| Arg | Default | Meaning |
+|---|---|---|
+| `qx`, `qy`, `qz`, `qw` | `0.5, 0.5, 0.5, 0.5` (xyzw) | Quest→world rotation. The default assumes operator stands behind/beside the robot, facing in the same direction as the robot. See "Calibration" below. |
+| `world_frame` | `world` | Robot world frame (parent of `quest_origin`). |
+| `quest_frame` | `quest_origin` | TF parent of the published controller/reference frames. |
+| `linear_gain` | `1.0` | m/s of EE velocity per metre of position error. |
+| `angular_gain` | `1.0` | rad/s of EE angular velocity per rad of orientation error. |
+
+Examples:
+
+```bash
+# Tune the gains:
+ros2 launch oculus_reader teleoperate.launch.py linear_gain:=1.5 angular_gain:=0.8
+
+# Override the orientation (if you stand facing the robot):
+ros2 launch oculus_reader teleoperate.launch.py qx:=... qy:=... qz:=... qw:=...
+```
+
+You can also set the same parameters via `ros2 run`:
+
+```bash
+ros2 run oculus_reader teleoperate --ros-args -p linear_gain:=1.5 -p angular_gain:=0.8
+```
+
+Other parameters not currently exposed on the launch file (you can pass via `ros2 run --ros-args -p ...`):
+
+| Param | Default | Meaning |
+|---|---|---|
+| `parent_frame_id` | `world` (launch overrides to `quest_origin`) | TF parent of published frames. |
+| `cmd_topic` | `/velocity_force_controller/command` | Where to publish the velocity command. |
+| `drive_hand` | `'r'` | Which controller drives the robot. Set to `'l'` to drive from the left hand. |
+
+### Tuning the gains
+
+Gain `N` makes the controller try to close `N×` of the current error per second, i.e. a time constant of `1/N` seconds. Start at `1.0` (1 s) and adjust:
+
+- **Oscillates / overshoots at engagement** → drop the gain.
+- **Robot lags behind your hand** → raise the gain.
+- **Asymmetric is normal**: linear gain can often go higher than angular gain because joint-velocity limits on rotations are stricter for most arms.
+
+A reasonable starting envelope is `linear_gain ∈ [0.5, 2.0]`, `angular_gain ∈ [0.3, 1.5]`.
 
 ### Calibration
 
@@ -123,13 +193,7 @@ Calibration recipe:
    - "Hand up" → `oculus_r` moves up.
    - "Hand forward" (away from your body) → `oculus_r` moves toward the robot.
    - "Hand right" → `oculus_r` moves to your right.
-5. Hold the right **grip** and move the controller — `oculus_r_reference` should follow with no jump.
-
-Override the orientation:
-
-```bash
-ros2 launch launch/teleoperate.launch.py qx:=... qy:=... qz:=... qw:=...
-```
+5. Hold the right **grip** and move the controller — `oculus_r_reference` should follow with no jump, and the robot should track it.
 
 ### Button conventions
 
@@ -137,7 +201,7 @@ Per hand, OculusReader exposes:
 
 | Button | Used for |
 |---|---|
-| Grip (`RG` / `LG`) | **Clutch** — hold to drive the reference frame. |
+| Grip (`RG` / `LG`) | **Clutch** — hold to drive the reference frame (and, on the `drive_hand`, the robot). |
 | Trigger (`RTr` / `LTr`, plus analog `rightTrig` / `leftTrig`) | Reserved for gripper open/close. |
 | A / B / X / Y, joysticks | Unused so far. |
 

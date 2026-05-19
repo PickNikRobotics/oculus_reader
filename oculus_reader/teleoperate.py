@@ -5,9 +5,20 @@ from rclpy.node import Node
 import tf2_ros
 from tf2_ros import TransformException  # type: ignore[attr-defined]
 from geometry_msgs.msg import TransformStamped
+from moveit_pro_controllers_msgs.msg import VelocityForceCommand  # type: ignore[import-not-found]
 import numpy as np
 
 TIP_FRAME_ID = 'grasp_link'
+
+
+def rotation_log(R):
+    """Axis-angle vector (rotation vector) from a 3x3 rotation matrix."""
+    cos_theta = max(-1.0, min(1.0, (np.trace(R) - 1.0) / 2.0))
+    theta = float(np.arccos(cos_theta))
+    if theta < 1e-9:
+        return np.zeros(3)
+    skew = (R - R.T) / (2.0 * np.sin(theta))
+    return theta * np.array([skew[2, 1], skew[0, 2], skew[1, 0]])
 
 
 def quaternion_from_matrix(M):
@@ -130,8 +141,22 @@ class TeleopNode(Node):
             self.get_parameter('parent_frame_id').get_parameter_value().string_value
         )
 
+        # Velocity command publishing. Only the configured "drive hand" sends
+        # commands. The twist is interpreted in the EE (tip) frame by the
+        # controller (control_frame defaults to identity). All 6 Cartesian
+        # axes are velocity-controlled; force control is disabled.
+        self.declare_parameter('cmd_topic', '/velocity_force_controller/command')
+        self.declare_parameter('drive_hand', 'r')  # 'r' or 'l'
+        self.declare_parameter('linear_gain', 1.0)
+        self.declare_parameter('angular_gain', 1.0)
+        self.cmd_topic = self.get_parameter('cmd_topic').get_parameter_value().string_value
+        self.drive_hand = self.get_parameter('drive_hand').get_parameter_value().string_value
+        self.linear_gain = self.get_parameter('linear_gain').get_parameter_value().double_value
+        self.angular_gain = self.get_parameter('angular_gain').get_parameter_value().double_value
+
         self.oculus_reader = OculusReader()
         self.br = tf2_ros.TransformBroadcaster(self)
+        self.cmd_pub = self.create_publisher(VelocityForceCommand, self.cmd_topic, 10)
 
         # TF lookup for initializing each reference frame at the robot tip.
         self.tf_buffer = tf2_ros.Buffer()
@@ -229,13 +254,18 @@ class TeleopNode(Node):
         or the clutch is released. T_tip is the latest tip pose looked up
         from TF (or None) -- used to re-anchor the reference on each clutch
         press.
+
+        If this hand is the configured drive_hand, also publishes a
+        VelocityForceCommand each tick while the clutch is engaged, and one
+        zero-twist on release so the controller stops promptly.
         """
+        was_engaged = clutch.engaged
+
         if hand in transformations:
             T_ctrl = transformations[hand]
             self.publish_transform(T_ctrl, raw_frame)
 
             clutch_pressed = bool(buttons.get(button_key, False)) if buttons else False
-            was_engaged = clutch.engaged
             clutch.update(T_ctrl, clutch_pressed, T_tip_current=T_tip)
 
             if clutch.engaged and not was_engaged:
@@ -245,6 +275,63 @@ class TeleopNode(Node):
 
         # Always publish the reference, even when the controller is briefly lost.
         self.publish_transform(clutch.T_ref, ref_frame)
+
+        # Drive the robot only from the configured hand.
+        if hand == self.drive_hand:
+            if clutch.engaged and T_tip is not None:
+                self._publish_velocity_command(T_tip, clutch.T_ref)
+            elif was_engaged and not clutch.engaged:
+                # Falling edge: emit a single zero twist so the robot stops
+                # promptly instead of waiting for the controller's timeout.
+                self._publish_velocity_command(T_tip, clutch.T_ref, zero=True)
+
+    def _publish_velocity_command(self, T_tip, T_ref, zero=False):
+        """
+        Build and publish a VelocityForceCommand driving all 6 Cartesian
+        axes with velocity. Linear and angular velocity are computed from
+        the pose error (T_ref relative to T_tip) and expressed in the EE
+        frame, which the controller's default identity control_frame
+        interprets correctly. zero=True emits a stop command (zero twist).
+        """
+        if zero:
+            linear = np.zeros(3)
+            angular = np.zeros(3)
+        else:
+            R_tip = T_tip[:3, :3]
+            R_tip_T = R_tip.T
+            # Pose error in the parent frame.
+            pos_err_parent = T_ref[:3, 3] - T_tip[:3, 3]
+            R_diff_parent = T_ref[:3, :3] @ R_tip_T
+            omega_parent = rotation_log(R_diff_parent)
+            # Re-express in the tip (EE) frame, then scale.
+            linear = self.linear_gain * (R_tip_T @ pos_err_parent)
+            angular = self.angular_gain * (R_tip_T @ omega_parent)
+
+        msg = VelocityForceCommand()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = TIP_FRAME_ID
+
+        # All 6 Cartesian axes velocity-controlled, force control disabled.
+        # The controller reads these once at the start of each command stream,
+        # but it's safe (and clearer) to set them on every message.
+        msg.velocity_controlled_axes.x = True
+        msg.velocity_controlled_axes.y = True
+        msg.velocity_controlled_axes.z = True
+        msg.velocity_controlled_axes.rx = True
+        msg.velocity_controlled_axes.ry = True
+        msg.velocity_controlled_axes.rz = True
+        # force_controlled_axes default to all False -- leave as is.
+        # wrench_gain defaults to 0.0 -- leave as is.
+        # control_frame defaults to identity (= EE frame) -- leave as is.
+
+        msg.twist.linear.x = float(linear[0])
+        msg.twist.linear.y = float(linear[1])
+        msg.twist.linear.z = float(linear[2])
+        msg.twist.angular.x = float(angular[0])
+        msg.twist.angular.y = float(angular[1])
+        msg.twist.angular.z = float(angular[2])
+
+        self.cmd_pub.publish(msg)
 
     def publish_transform(self, transform, name):
         translation = transform[:3, 3]

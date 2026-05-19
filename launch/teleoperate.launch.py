@@ -62,6 +62,10 @@ def generate_launch_description():
             description='Robot world frame (TF parent of quest_origin)'),
         DeclareLaunchArgument('quest_frame', default_value='quest_origin',
             description='Quest tracking frame (TF parent of controller poses)'),
+        DeclareLaunchArgument('linear_gain', default_value='1.0',
+            description='m/s of EE velocity per metre of position error'),
+        DeclareLaunchArgument('angular_gain', default_value='1.0',
+            description='rad/s of EE angular velocity per rad of orientation error'),
     ]
 
     static_tf = Node(
@@ -85,6 +89,8 @@ def generate_launch_description():
             'python3', teleop_script,
             '--ros-args',
             '-p', ['parent_frame_id:=', LaunchConfiguration('quest_frame')],
+            '-p', ['linear_gain:=',     LaunchConfiguration('linear_gain')],
+            '-p', ['angular_gain:=',    LaunchConfiguration('angular_gain')],
         ],
         output='screen',
     )
