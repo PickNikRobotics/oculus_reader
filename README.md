@@ -73,6 +73,21 @@ ros2 run data_collection data_collection
 
 Enable developer mode on the Quest, approve USB debugging, and verify connectivity with `adb devices`. See the [upstream README](https://github.com/rail-berkeley/oculus_reader#set-up-of-a-new-oculus-quest-device) for the step-by-step.
 
+### Install the teleop APK on the Quest
+
+The Quest needs a small APK installed (it's what streams the controller poses out over ADB). The `oculus_reader` Python module ships the APK and a tiny installer that pushes it to a connected headset:
+
+```bash
+# Plug the Quest in, approve the ADB prompt in the headset, then:
+python3 /home/studio-user/user_ws/src/oculus_reader/oculus_reader/install.py
+```
+
+Flags:
+- `--reinstall` — force-reinstall (e.g. after pulling an updated APK).
+- `--uninstall` — remove the APK from the Quest.
+
+You usually only need to run this once per Quest. (For convenience, `OculusReader(...)` also auto-installs the APK on its first connection, so you can skip this step if you go straight to running the teleop or one of the smoke-test tools below.)
+
 ### Smoke-test tools (optional)
 
 Two small standalone scripts are useful for debugging the controller link without running the full teleop pipeline. They live in the `oculus_reader/` Python module:
