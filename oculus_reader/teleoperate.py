@@ -1,9 +1,11 @@
 from oculus_reader.reader import OculusReader
 import rclpy
 import rclpy.time
+from rclpy.action.client import ActionClient
 from rclpy.node import Node
 import tf2_ros
 from tf2_ros import TransformException  # type: ignore[attr-defined]
+from control_msgs.action import GripperCommand
 from geometry_msgs.msg import TransformStamped
 from moveit_pro_controllers_msgs.msg import VelocityForceCommand  # type: ignore[import-not-found]
 import numpy as np
@@ -154,9 +156,28 @@ class TeleopNode(Node):
         self.linear_gain = self.get_parameter('linear_gain').get_parameter_value().double_value
         self.angular_gain = self.get_parameter('angular_gain').get_parameter_value().double_value
 
+        # Gripper command (Robotiq 2F-85 over GripperCommand action). The analog
+        # trigger of the gripper_drive_hand is mapped to the knuckle joint
+        # position. Goals are only sent when the desired position changes by
+        # more than gripper_threshold, to avoid spamming the action server.
+        self.declare_parameter('gripper_action_name', '/robotiq_gripper_controller/gripper_cmd')
+        self.declare_parameter('gripper_drive_hand', 'r')  # 'r' or 'l'
+        self.declare_parameter('gripper_min_position', 0.0)
+        self.declare_parameter('gripper_max_position', 0.8)
+        self.declare_parameter('gripper_threshold', 0.02)
+        self.declare_parameter('gripper_max_effort', 50.0)
+        self.gripper_action_name = self.get_parameter('gripper_action_name').get_parameter_value().string_value
+        self.gripper_drive_hand = self.get_parameter('gripper_drive_hand').get_parameter_value().string_value
+        self.gripper_min_position = self.get_parameter('gripper_min_position').get_parameter_value().double_value
+        self.gripper_max_position = self.get_parameter('gripper_max_position').get_parameter_value().double_value
+        self.gripper_threshold = self.get_parameter('gripper_threshold').get_parameter_value().double_value
+        self.gripper_max_effort = self.get_parameter('gripper_max_effort').get_parameter_value().double_value
+
         self.oculus_reader = OculusReader()
         self.br = tf2_ros.TransformBroadcaster(self)
         self.cmd_pub = self.create_publisher(VelocityForceCommand, self.cmd_topic, 10)
+        self.gripper_client = ActionClient(self, GripperCommand, self.gripper_action_name)
+        self._last_gripper_cmd = None  # rad; last position we asked the gripper to go to
 
         # TF lookup for initializing each reference frame at the robot tip.
         self.tf_buffer = tf2_ros.Buffer()
@@ -229,6 +250,8 @@ class TeleopNode(Node):
             transformations=transformations, buttons=buttons, T_tip=T_tip,
         )
 
+        self._process_gripper(buttons)
+
     def _lookup_tip_pose(self):
         """
         Look up the tip pose in parent_frame_id. Returns a 4x4 numpy matrix on
@@ -284,6 +307,38 @@ class TeleopNode(Node):
                 # Falling edge: emit a single zero twist so the robot stops
                 # promptly instead of waiting for the controller's timeout.
                 self._publish_velocity_command(T_tip, clutch.T_ref, zero=True)
+
+    def _process_gripper(self, buttons):
+        """
+        Map the gripper_drive_hand's analog trigger to the Robotiq knuckle
+        joint position and send a GripperCommand goal whenever the target
+        changes by more than gripper_threshold rad. Sending on every tick
+        would spam the action server with pre-empted goals.
+        """
+        if not buttons:
+            return
+
+        # OculusReader exposes the analog trigger as a (float,) tuple in [0, 1].
+        trig_key = 'rightTrig' if self.gripper_drive_hand == 'r' else 'leftTrig'
+        raw = buttons.get(trig_key)
+        if not isinstance(raw, tuple) or not raw:
+            return
+        trigger = float(raw[0])
+        target = self.gripper_min_position + trigger * (
+            self.gripper_max_position - self.gripper_min_position
+        )
+
+        if (self._last_gripper_cmd is not None
+                and abs(target - self._last_gripper_cmd) < self.gripper_threshold):
+            return  # below the dead-band; don't churn the action server
+
+        goal = GripperCommand.Goal()
+        goal.command.position = float(target)
+        goal.command.max_effort = float(self.gripper_max_effort)
+        # Fire-and-forget: we don't care about the result here. The action
+        # server will pre-empt the previous goal automatically.
+        self.gripper_client.send_goal_async(goal)
+        self._last_gripper_cmd = target
 
     def _publish_velocity_command(self, T_tip, T_ref, zero=False):
         """

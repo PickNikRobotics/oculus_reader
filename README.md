@@ -111,11 +111,12 @@ Two pairs of TF frames, under a `quest_origin` parent that is itself a child of 
 | `oculus_r`, `oculus_l` | Raw controller poses, every tick. | Continuously, ~20 Hz. |
 | `oculus_r_reference`, `oculus_l_reference` | The pose the robot's end effector should track. | Only while the corresponding grip button is held. |
 
-Plus the velocity command:
+Plus the velocity command and the gripper command:
 
-| Topic | Type | When it publishes |
+| Topic / Action | Type | When it publishes |
 |---|---|---|
 | `/velocity_force_controller/command` | `moveit_pro_controllers_msgs/msg/VelocityForceCommand` | Every tick while the configured drive hand's clutch is engaged, plus one zero-twist on the falling edge so the robot stops promptly. |
+| `/robotiq_gripper_controller/gripper_cmd` (action) | `control_msgs/action/GripperCommand` | A new goal is sent whenever the analog trigger maps to a joint position more than `gripper_threshold` rad away from the last sent value. |
 
 The reference frames are **clutched**: they only move when the grip button on that hand's controller is held down. When you release the grip, they freeze. When you press the grip again, the reference snaps to the **current** robot tip pose (looked up via TF) — so the robot never jumps even if it has moved between presses. Motion deltas are applied in the **parent (world) frame**, so "move your hand down in world" always means "reference moves down in world", regardless of the robot's current orientation.
 
@@ -168,6 +169,12 @@ Other parameters not currently exposed on the launch file (you can pass via `ros
 | `parent_frame_id` | `world` (launch overrides to `quest_origin`) | TF parent of published frames. |
 | `cmd_topic` | `/velocity_force_controller/command` | Where to publish the velocity command. |
 | `drive_hand` | `'r'` | Which controller drives the robot. Set to `'l'` to drive from the left hand. |
+| `gripper_action_name` | `/robotiq_gripper_controller/gripper_cmd` | Where to send `GripperCommand` goals. |
+| `gripper_drive_hand` | `'r'` | Which controller's trigger commands the gripper. Independent of `drive_hand`. |
+| `gripper_min_position` | `0.0` (rad) | Knuckle joint position when the trigger is fully released. |
+| `gripper_max_position` | `0.8` (rad) | Knuckle joint position when the trigger is fully pressed. |
+| `gripper_threshold` | `0.02` (rad) | Dead-band: a new goal is sent only when the target moves by more than this since the last sent goal. Prevents action-server churn. |
+| `gripper_max_effort` | `50.0` (N) | `GripperCommand.command.max_effort`. Lower to make the gripper stall earlier on contact. |
 
 ### Tuning the gains
 
@@ -202,8 +209,10 @@ Per hand, OculusReader exposes:
 | Button | Used for |
 |---|---|
 | Grip (`RG` / `LG`) | **Clutch** — hold to drive the reference frame (and, on the `drive_hand`, the robot). |
-| Trigger (`RTr` / `LTr`, plus analog `rightTrig` / `leftTrig`) | Reserved for gripper open/close. |
+| Trigger analog (`rightTrig` / `leftTrig`, float in [0, 1]) | **Gripper** — linearly mapped to `[gripper_min_position, gripper_max_position]`. Fully released → open, fully pressed → closed. |
 | A / B / X / Y, joysticks | Unused so far. |
+
+The gripper is driven continuously, not binary — recording the analog value gives a richer signal for downstream policy learning, and you can always threshold it later if a binary signal is all you need.
 
 ### Logs you'll see
 
