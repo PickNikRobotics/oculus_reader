@@ -45,22 +45,36 @@ fi
 
 # --- pip deps (system-wide) -----------------------------------------------
 bold "==> Installing Python dependencies system-wide"
-# We deliberately do not use --user. In the container, system-site Python is
-# already where ROS 2 and rclpy live; installing here keeps everything on the
-# same import path and avoids surprises when ros2 launch / ros2 run start the
-# script under whatever user/python combination they pick.
-$SUDO pip3 install --upgrade --no-cache-dir \
-    pure-python-adb \
-    numpy \
-    pyyaml
+# We deliberately install system-wide (no --user). In the container, system
+# Python is already where ROS 2 and rclpy live; matching that path avoids
+# surprises when ros2 launch / ros2 run start the script under whatever user
+# the operator happens to be.
+#
+# --ignore-installed forces pip to write to system-site (/usr/local/lib/...)
+# even if a stale '--user' copy exists in /root/.local or ~/.local from a
+# previous run -- those would otherwise shadow the install and pip would
+# helpfully report "already satisfied" without actually fixing anything for
+# the user who'll run the node (typically not root).
+$SUDO -H pip3 install --upgrade --no-cache-dir --ignore-installed \
+    pure-python-adb numpy pyyaml
 
 # --- smoke test ------------------------------------------------------------
 bold "==> Verifying imports"
+# Verify under the *current* user, who is the one that will run the node.
+# This catches the "installed-but-only-in-/root/.local" case.
 python3 - <<'PY'
-from ppadb.client import Client  # noqa: F401
-import numpy, yaml
+import sys
+try:
+    from ppadb.client import Client  # noqa: F401
+    import numpy, yaml
+except ImportError as e:
+    sys.stderr.write(
+        f"\033[1;31mverification failed:\033[0m {e}\n"
+        f"sys.path = {sys.path}\n"
+    )
+    sys.exit(1)
 print(f"  numpy {numpy.__version__}, pyyaml {yaml.__version__}")
-print("  ppadb importable")
+print(f"  ppadb importable from {Client.__module__}")
 PY
 
 # --- next steps ------------------------------------------------------------
