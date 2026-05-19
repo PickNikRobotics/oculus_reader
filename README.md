@@ -17,6 +17,17 @@ Until the hardware is secured, please create issues if the software does not beh
 
 -------------------
 
+## Repo layout
+
+This repository contains two pieces:
+
+| Directory | What it is |
+|---|---|
+| `oculus_reader/` | The upstream Python module (`reader.py`, button parser, APK). Pure Python, no ROS. Provides the `OculusReader` class used to talk to the Quest. |
+| `data_collection/` | A ROS 2 `ament_python` package (the Quest -> TF / Cartesian velocity / gripper teleop pipeline). Imports `oculus_reader` at runtime. |
+
+The `oculus_reader/` module is not pip-installed (a setup.py at the repo root would shadow `data_collection/` from colcon's package discovery); instead `container_install.sh` drops a small `.pth` file so `import oculus_reader` resolves to the source tree directly.
+
 ## Quick start
 
 This package is intended to run inside the MoveIt Pro dev container, where ROS 2, `moveit_pro_controllers_msgs`, and the rest of the MoveIt Pro stack are already available. The container is the only supported environment.
@@ -34,7 +45,7 @@ git clone git@github.com:PickNikRobotics/oculus_reader.git
 
 ### One-time container setup
 
-Inside the container, `oculus_reader` needs `adb` plus a few small pip packages (`pure-python-adb`, `numpy`, `pyyaml`). The container is the isolation boundary, so these are installed system-wide -- no venv. Run once per container build:
+Inside the container, the teleop needs `adb`, a few small pip packages (`pure-python-adb`, `numpy`, `pyyaml`), and a `.pth` entry so `import oculus_reader` finds the module in this repo. The container is the isolation boundary, so everything goes system-wide -- no venv. Run once per container build:
 
 ```bash
 cd /home/studio-user/user_ws/src/oculus_reader
@@ -45,20 +56,20 @@ The script auto-elevates with `sudo` if needed, is idempotent (safe to re-run), 
 
 ### Build
 
-`oculus_reader` is an `ament_python` package (see `package.xml`, `setup.cfg`, `setup.py`, `resource/oculus_reader`). Build with colcon:
+`data_collection` is an `ament_python` package (see `data_collection/package.xml`, `data_collection/setup.cfg`, `data_collection/setup.py`, `data_collection/resource/data_collection`). Build with colcon:
 
 ```bash
 cd /home/studio-user/user_ws
-colcon build --packages-select oculus_reader
+colcon build --packages-select data_collection
 source install/setup.bash
 ```
 
 After that, `ros2 launch` and `ros2 run` work in any terminal that sources the overlay:
 
 ```bash
-ros2 launch oculus_reader teleoperate.launch.py
+ros2 launch data_collection teleoperate.launch.py
 # or, directly:
-ros2 run oculus_reader teleoperate
+ros2 run data_collection teleoperate
 ```
 
 ### Quest-side setup
@@ -70,11 +81,11 @@ ros2 run oculus_reader teleoperate
 
 ### Smoke-test tools (optional)
 
-Two small standalone scripts are useful for debugging the controller link without running the full teleop:
+Two small standalone scripts are useful for debugging the controller link without running the full teleop pipeline. They live in the `oculus_reader/` Python module:
 
 ```bash
 # Stream raw controller poses + buttons to the terminal.
-ros2 run oculus_reader reader
+python3 /home/studio-user/user_ws/src/oculus_reader/oculus_reader/reader.py
 
 # Publish controller poses as TF frames (world -> oculus_r / oculus_l) for RViz2.
 python3 /home/studio-user/user_ws/src/oculus_reader/oculus_reader/visualize_oculus_transforms_ros2.py
@@ -90,7 +101,7 @@ rviz2     # add a TF display, fixed frame = world
 
 ## Teleoperation
 
-`oculus_reader/teleoperate.py` plus `launch/teleoperate.launch.py` provide a full clutched-VR-teleop pipeline: the Quest controllers are mapped onto two TF reference frames; while the grip is held, the node also publishes a Cartesian velocity command that drives the robot's end effector toward the reference, and the analog trigger commands the gripper.
+`data_collection/data_collection/teleoperate.py` plus `data_collection/launch/teleoperate.launch.py` provide a full clutched-VR-teleop pipeline: the Quest controllers are mapped onto two TF reference frames; while the grip is held, the node also publishes a Cartesian velocity command that drives the robot's end effector toward the reference, and the analog trigger commands the gripper.
 
 ### What gets published
 
@@ -113,13 +124,13 @@ The reference frames are **clutched**: they only move when the grip button on th
 ### Prerequisites
 
 - The robot's TF tree must publish `grasp_link` (the tip frame the references anchor to). This typically means a `robot_state_publisher` is running with the robot's URDF. Without it, the teleop node will log "Waiting for TF '<parent>' -> 'grasp_link'..." and never start.
-- The tip frame name is hard-coded as `TIP_FRAME_ID = 'grasp_link'` at the top of `teleoperate.py` — change there if your robot uses a different convention.
+- The tip frame name is hard-coded as `TIP_FRAME_ID = 'grasp_link'` at the top of `data_collection/data_collection/teleoperate.py` — change there if your robot uses a different convention.
 - The `velocity_force_controller` must be running on the robot (the topic `/velocity_force_controller/command` should appear in `ros2 topic list`). Otherwise commands are published but go nowhere.
 
 ### Launch
 
 ```bash
-ros2 launch oculus_reader teleoperate.launch.py
+ros2 launch data_collection teleoperate.launch.py
 ```
 
 This brings up:
@@ -140,16 +151,16 @@ Examples:
 
 ```bash
 # Tune the gains:
-ros2 launch oculus_reader teleoperate.launch.py linear_gain:=1.5 angular_gain:=0.8
+ros2 launch data_collection teleoperate.launch.py linear_gain:=1.5 angular_gain:=0.8
 
 # Override the orientation (if you stand facing the robot):
-ros2 launch oculus_reader teleoperate.launch.py qx:=... qy:=... qz:=... qw:=...
+ros2 launch data_collection teleoperate.launch.py qx:=... qy:=... qz:=... qw:=...
 ```
 
 You can also set the same parameters via `ros2 run`:
 
 ```bash
-ros2 run oculus_reader teleoperate --ros-args -p linear_gain:=1.5 -p angular_gain:=0.8
+ros2 run data_collection teleoperate --ros-args -p linear_gain:=1.5 -p angular_gain:=0.8
 ```
 
 Other parameters not currently exposed on the launch file (you can pass via `ros2 run --ros-args -p ...`):

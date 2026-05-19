@@ -30,23 +30,16 @@ Calibration recipe
 
 Override the orientation at launch time with qx/qy/qz/qw arguments:
 
-    ros2 launch /path/to/teleoperate.launch.py qx:=... qy:=... qz:=... qw:=...
+    ros2 launch data_collection teleoperate.launch.py qx:=... qy:=... qz:=... qw:=...
 """
 
-import os
-
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    here = os.path.dirname(os.path.realpath(__file__))
-    teleop_script = os.path.realpath(
-        os.path.join(here, '..', 'oculus_reader', 'teleoperate.py')
-    )
-
     # Only the orientation matters for the clutch math; translation is fixed
     # at the world origin since deltas are unaffected by it.
     args = [
@@ -84,14 +77,15 @@ def generate_launch_description():
         output='screen',
     )
 
-    teleop = ExecuteProcess(
-        cmd=[
-            'python3', teleop_script,
-            '--ros-args',
-            '-p', ['parent_frame_id:=', LaunchConfiguration('quest_frame')],
-            '-p', ['linear_gain:=',     LaunchConfiguration('linear_gain')],
-            '-p', ['angular_gain:=',    LaunchConfiguration('angular_gain')],
-        ],
+    teleop = Node(
+        package='data_collection',
+        executable='teleoperate',
+        name='oculus_teleop',
+        parameters=[{
+            'parent_frame_id': LaunchConfiguration('quest_frame'),
+            'linear_gain':     LaunchConfiguration('linear_gain'),
+            'angular_gain':    LaunchConfiguration('angular_gain'),
+        }],
         output='screen',
     )
 

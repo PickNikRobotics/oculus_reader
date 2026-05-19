@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
 #
-# One-time setup for running oculus_reader inside the MoveIt Pro dev container.
+# One-time setup for the Quest teleop pipeline inside the MoveIt Pro dev
+# container. Installs:
+#   - adb (apt), for talking to the Quest over USB.
+#   - The pure-python-adb / numpy / pyyaml pip packages.
+#   - The 'oculus_reader' Python module (this repo's upstream-style package)
+#     as an editable install, so 'data_collection' can import it.
 #
-# Inside a container, system Python is the right place for this package's deps
-# (the container is already the isolation boundary; a venv on top is redundant
-# and would also fight ros2 launch / ros2 run). After this script, any terminal
-# in the container that sources the workspace overlay can launch the teleop
-# directly:
+# After this script + a colcon build, you can launch the teleop from any
+# terminal that sources the workspace overlay:
 #
 #     source install/setup.bash
-#     ros2 launch oculus_reader teleoperate.launch.py
+#     ros2 launch data_collection teleoperate.launch.py
+#
+# Inside a container, system Python is the right place for these deps -- the
+# container is the isolation boundary, and a venv on top would just fight
+# 'ros2 launch' / 'ros2 run'.
 #
 # Usage:
 #     bash container_install.sh
 
 set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- pretty output ---------------------------------------------------------
 bold()   { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -58,6 +66,23 @@ bold "==> Installing Python dependencies system-wide"
 $SUDO -H pip3 install --upgrade --no-cache-dir --ignore-installed \
     pure-python-adb numpy pyyaml
 
+# --- oculus_reader (this repo's plain Python module) ----------------------
+bold "==> Exposing the oculus_reader Python module on sys.path"
+# The 'oculus_reader' Python module lives at ${REPO_DIR}/oculus_reader/
+# (upstream layout). The data_collection ROS package needs to be able to
+# 'from oculus_reader.reader import OculusReader'.
+#
+# We don't pip-install it: a setup.py at the repo root would make colcon see
+# the whole repo as a Python package and stop descending, hiding the
+# data_collection ament_python package one level deeper. Instead we drop a
+# .pth file that adds the repo root to system Python's sys.path. Then
+# 'import oculus_reader' resolves to ${REPO_DIR}/oculus_reader/ directly,
+# tracking source changes with no editable-install indirection.
+SITE_PACKAGES=$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
+PTH_FILE="${SITE_PACKAGES}/oculus_reader.pth"
+echo "writing ${PTH_FILE} -> ${REPO_DIR}"
+echo "${REPO_DIR}" | $SUDO tee "${PTH_FILE}" >/dev/null
+
 # --- smoke test ------------------------------------------------------------
 bold "==> Verifying imports"
 # Verify under the *current* user, who is the one that will run the node.
@@ -66,6 +91,7 @@ python3 - <<'PY'
 import sys
 try:
     from ppadb.client import Client  # noqa: F401
+    from oculus_reader.reader import OculusReader  # noqa: F401
     import numpy, yaml
 except ImportError as e:
     sys.stderr.write(
@@ -75,6 +101,7 @@ except ImportError as e:
     sys.exit(1)
 print(f"  numpy {numpy.__version__}, pyyaml {yaml.__version__}")
 print(f"  ppadb importable from {Client.__module__}")
+print(f"  oculus_reader importable from {OculusReader.__module__}")
 PY
 
 # --- next steps ------------------------------------------------------------
@@ -82,12 +109,12 @@ green ""
 green "Container setup complete."
 echo ""
 echo "Next steps:"
-echo "  1. Build the package (if you haven't already):"
-echo "       colcon build --packages-select oculus_reader"
+echo "  1. Build the ROS package (if you haven't already):"
+echo "       colcon build --packages-select data_collection"
 echo "  2. Source the workspace overlay in each new terminal:"
 echo "       source install/setup.bash"
 echo "  3. Launch teleop:"
-echo "       ros2 launch oculus_reader teleoperate.launch.py"
+echo "       ros2 launch data_collection teleoperate.launch.py"
 echo ""
 echo "Re-run this script after a container rebuild, or fold its contents into"
 echo "the dev container Dockerfile to make the deps permanent."

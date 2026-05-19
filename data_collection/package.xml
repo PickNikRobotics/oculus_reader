@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>data_collection</name>
+  <version>0.1.0</version>
+  <description>
+    Quest-driven VR teleop and data collection tools for MoveIt Pro.
+    Consumes the oculus_reader Python module to stream Meta Quest controller
+    poses, publishes them (and clutched reference frames) as TF, drives the
+    robot via /velocity_force_controller/command, and commands the Robotiq
+    gripper via the /robotiq_gripper_controller/gripper_cmd action.
+  </description>
+
+  <maintainer email="mario.prats@picknik.ai">Mario Prats</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>control_msgs</exec_depend>
+  <exec_depend>moveit_pro_controllers_msgs</exec_depend>
+  <!--
+    Also depends on the 'oculus_reader' Python package (not a ROS package, no
+    rosdep key). container_install.sh installs it system-wide via pip.
+  -->
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
