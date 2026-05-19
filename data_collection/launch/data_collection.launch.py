@@ -30,7 +30,7 @@ Calibration recipe
 
 Override the orientation at launch time with qx/qy/qz/qw arguments:
 
-    ros2 launch data_collection teleoperate.launch.py qx:=... qy:=... qz:=... qw:=...
+    ros2 launch data_collection data_collection.launch.py qx:=... qy:=... qz:=... qw:=...
 """
 
 from launch import LaunchDescription
@@ -59,6 +59,12 @@ def generate_launch_description():
             description='m/s of EE velocity per metre of position error'),
         DeclareLaunchArgument('angular_gain', default_value='1.0',
             description='rad/s of EE angular velocity per rad of orientation error'),
+        DeclareLaunchArgument('cmd_topic',
+            default_value='/velocity_force_controller/command',
+            description='Topic for the VelocityForceCommand sent to the arm controller'),
+        DeclareLaunchArgument('gripper_action_name',
+            default_value='/robotiq_gripper_controller/gripper_cmd',
+            description='GripperCommand action name'),
     ]
 
     static_tf = Node(
@@ -79,12 +85,14 @@ def generate_launch_description():
 
     teleop = Node(
         package='data_collection',
-        executable='teleoperate',
+        executable='data_collection',
         name='oculus_teleop',
         parameters=[{
-            'parent_frame_id': LaunchConfiguration('quest_frame'),
-            'linear_gain':     LaunchConfiguration('linear_gain'),
-            'angular_gain':    LaunchConfiguration('angular_gain'),
+            'parent_frame_id':     LaunchConfiguration('quest_frame'),
+            'linear_gain':         LaunchConfiguration('linear_gain'),
+            'angular_gain':        LaunchConfiguration('angular_gain'),
+            'cmd_topic':           LaunchConfiguration('cmd_topic'),
+            'gripper_action_name': LaunchConfiguration('gripper_action_name'),
         }],
         output='screen',
     )

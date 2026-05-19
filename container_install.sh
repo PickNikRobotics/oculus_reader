@@ -4,14 +4,14 @@
 # container. Installs:
 #   - adb (apt), for talking to the Quest over USB.
 #   - The pure-python-adb / numpy / pyyaml pip packages.
-#   - The 'oculus_reader' Python module (this repo's upstream-style package)
-#     as an editable install, so 'data_collection' can import it.
+#   - A .pth file that exposes this repo's 'oculus_reader' Python module on
+#     the system Python path, so the data_collection ROS package can import it.
 #
 # After this script + a colcon build, you can launch the teleop from any
 # terminal that sources the workspace overlay:
 #
 #     source install/setup.bash
-#     ros2 launch data_collection teleoperate.launch.py
+#     ros2 launch data_collection data_collection.launch.py
 #
 # Inside a container, system Python is the right place for these deps -- the
 # container is the isolation boundary, and a venv on top would just fight
@@ -114,7 +114,7 @@ echo "       colcon build --packages-select data_collection"
 echo "  2. Source the workspace overlay in each new terminal:"
 echo "       source install/setup.bash"
 echo "  3. Launch teleop:"
-echo "       ros2 launch data_collection teleoperate.launch.py"
+echo "       ros2 launch data_collection data_collection.launch.py"
 echo ""
 echo "Re-run this script after a container rebuild, or fold its contents into"
 echo "the dev container Dockerfile to make the deps permanent."

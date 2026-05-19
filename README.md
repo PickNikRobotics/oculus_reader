@@ -67,9 +67,9 @@ source install/setup.bash
 After that, `ros2 launch` and `ros2 run` work in any terminal that sources the overlay:
 
 ```bash
-ros2 launch data_collection teleoperate.launch.py
+ros2 launch data_collection data_collection.launch.py
 # or, directly:
-ros2 run data_collection teleoperate
+ros2 run data_collection data_collection
 ```
 
 ### Quest-side setup
@@ -101,7 +101,7 @@ rviz2     # add a TF display, fixed frame = world
 
 ## Teleoperation
 
-`data_collection/data_collection/teleoperate.py` plus `data_collection/launch/teleoperate.launch.py` provide a full clutched-VR-teleop pipeline: the Quest controllers are mapped onto two TF reference frames; while the grip is held, the node also publishes a Cartesian velocity command that drives the robot's end effector toward the reference, and the analog trigger commands the gripper.
+`data_collection/data_collection/data_collection.py` plus `data_collection/launch/data_collection.launch.py` provide a full clutched-VR-teleop pipeline: the Quest controllers are mapped onto two TF reference frames; while the grip is held, the node also publishes a Cartesian velocity command that drives the robot's end effector toward the reference, and the analog trigger commands the gripper.
 
 ### What gets published
 
@@ -124,18 +124,18 @@ The reference frames are **clutched**: they only move when the grip button on th
 ### Prerequisites
 
 - The robot's TF tree must publish `grasp_link` (the tip frame the references anchor to). This typically means a `robot_state_publisher` is running with the robot's URDF. Without it, the teleop node will log "Waiting for TF '<parent>' -> 'grasp_link'..." and never start.
-- The tip frame name is hard-coded as `TIP_FRAME_ID = 'grasp_link'` at the top of `data_collection/data_collection/teleoperate.py` — change there if your robot uses a different convention.
+- The tip frame name is hard-coded as `TIP_FRAME_ID = 'grasp_link'` at the top of `data_collection/data_collection/data_collection.py` — change there if your robot uses a different convention.
 - The `velocity_force_controller` must be running on the robot (the topic `/velocity_force_controller/command` should appear in `ros2 topic list`). Otherwise commands are published but go nowhere.
 
 ### Launch
 
 ```bash
-ros2 launch data_collection teleoperate.launch.py
+ros2 launch data_collection data_collection.launch.py
 ```
 
 This brings up:
 1. A `static_transform_publisher` for `world → quest_origin`, defining where the Quest tracking frame sits relative to the robot.
-2. The `teleoperate.py` node, publishing the four TF frames listed above and the velocity command.
+2. The teleop node, publishing the four TF frames listed above and the velocity command.
 
 ### Launch arguments
 
@@ -146,21 +146,23 @@ This brings up:
 | `quest_frame` | `quest_origin` | TF parent of the published controller/reference frames. |
 | `linear_gain` | `1.0` | m/s of EE velocity per metre of position error. |
 | `angular_gain` | `1.0` | rad/s of EE angular velocity per rad of orientation error. |
+| `cmd_topic` | `/velocity_force_controller/command` | Topic for the `VelocityForceCommand` sent to the arm controller. |
+| `gripper_action_name` | `/robotiq_gripper_controller/gripper_cmd` | `GripperCommand` action name. |
 
 Examples:
 
 ```bash
 # Tune the gains:
-ros2 launch data_collection teleoperate.launch.py linear_gain:=1.5 angular_gain:=0.8
+ros2 launch data_collection data_collection.launch.py linear_gain:=1.5 angular_gain:=0.8
 
 # Override the orientation (if you stand facing the robot):
-ros2 launch data_collection teleoperate.launch.py qx:=... qy:=... qz:=... qw:=...
+ros2 launch data_collection data_collection.launch.py qx:=... qy:=... qz:=... qw:=...
 ```
 
 You can also set the same parameters via `ros2 run`:
 
 ```bash
-ros2 run data_collection teleoperate --ros-args -p linear_gain:=1.5 -p angular_gain:=0.8
+ros2 run data_collection data_collection --ros-args -p linear_gain:=1.5 -p angular_gain:=0.8
 ```
 
 Other parameters not currently exposed on the launch file (you can pass via `ros2 run --ros-args -p ...`):
@@ -168,9 +170,7 @@ Other parameters not currently exposed on the launch file (you can pass via `ros
 | Param | Default | Meaning |
 |---|---|---|
 | `parent_frame_id` | `world` (launch overrides to `quest_origin`) | TF parent of published frames. |
-| `cmd_topic` | `/velocity_force_controller/command` | Where to publish the velocity command. |
 | `drive_hand` | `'r'` | Which controller drives the robot. Set to `'l'` to drive from the left hand. |
-| `gripper_action_name` | `/robotiq_gripper_controller/gripper_cmd` | Where to send `GripperCommand` goals. |
 | `gripper_drive_hand` | `'r'` | Which controller's trigger commands the gripper. Independent of `drive_hand`. |
 | `gripper_min_position` | `0.0` (rad) | Knuckle joint position when the trigger is fully released. |
 | `gripper_max_position` | `0.8` (rad) | Knuckle joint position when the trigger is fully pressed. |

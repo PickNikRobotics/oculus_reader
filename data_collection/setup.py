@@ -21,7 +21,7 @@ setup(
     description='Quest-driven VR teleop and data collection tools for MoveIt Pro',
     entry_points={
         'console_scripts': [
-            'teleoperate = data_collection.teleoperate:main',
+            'data_collection = data_collection.data_collection:main',
         ],
     },
 )
