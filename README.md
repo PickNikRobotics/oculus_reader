@@ -88,6 +88,36 @@ Flags:
 
 You usually only need to run this once per Quest. (For convenience, `OculusReader(...)` also auto-installs the APK on its first connection, so you can skip this step if you go straight to running the teleop or one of the smoke-test tools below.)
 
+### Try it on `kinova_sim` (end-to-end smoke test)
+
+The MoveIt Pro `kinova_sim` config is a convenient first target: it brings up a simulated Kinova Gen3 + Robotiq 2F-85, exposes a `velocity_force_controller` and a `robotiq_gripper_controller`, and uses `grasp_link` as the tip frame — exactly what `data_collection` expects.
+
+1. **Launch MoveIt Pro with the `kinova_sim` config.** Wait for the UI to come up.
+2. **Drive the robot to the `Home` waypoint** via the UI (Objectives → "Move to Waypoint" or similar). This gets the arm into a known configuration with `grasp_link` in a reachable, well-conditioned pose.
+3. **Activate the velocity-force controller** (it isn't on by default; the joint-trajectory controller usually is):
+
+   ```bash
+   ros2 control switch_controllers \
+     --activate   velocity_force_controller \
+     --deactivate joint_trajectory_admittance_controller
+   ```
+
+   Verify: `ros2 control list_controllers` should now show `velocity_force_controller [active]`.
+4. **Run the teleop** in another terminal in the dev container:
+
+   ```bash
+   source /home/studio-user/user_ws/install/setup.bash
+   ros2 launch data_collection data_collection.launch.py
+   ```
+
+5. **Verify**:
+   - Put the headset on (or defeat the proximity sensor). You should see `Streaming started. Controllers detected: right, left.` in the launch log.
+   - Hold the **right grip** and move the controller — the simulated robot's tip should track your hand.
+   - Squeeze the **right trigger** — the gripper should close proportionally to how hard you pull.
+   - Release the grip — the arm stops; the gripper holds its last commanded position.
+
+If something feels inverted, see "Calibration" further down.
+
 ### Smoke-test tools (optional)
 
 Two small standalone scripts are useful for debugging the controller link without running the full teleop pipeline. They live in the `oculus_reader/` Python module:
