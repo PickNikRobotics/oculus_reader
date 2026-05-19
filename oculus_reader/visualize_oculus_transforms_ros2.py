@@ -1,10 +1,40 @@
-from reader import OculusReader
-from tf_transformations import quaternion_from_matrix
+from oculus_reader.reader import OculusReader
 import rclpy
 from rclpy.node import Node
 import tf2_ros
 from geometry_msgs.msg import TransformStamped
 import numpy as np
+
+
+def quaternion_from_matrix(M):
+    """Convert a 4x4 homogeneous transform to a quaternion [x, y, z, w]."""
+    R = M[:3, :3]
+    trace = R[0, 0] + R[1, 1] + R[2, 2]
+    if trace > 0.0:
+        s = 0.5 / np.sqrt(trace + 1.0)
+        w = 0.25 / s
+        x = (R[2, 1] - R[1, 2]) * s
+        y = (R[0, 2] - R[2, 0]) * s
+        z = (R[1, 0] - R[0, 1]) * s
+    elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
+        s = 2.0 * np.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2])
+        w = (R[2, 1] - R[1, 2]) / s
+        x = 0.25 * s
+        y = (R[0, 1] + R[1, 0]) / s
+        z = (R[0, 2] + R[2, 0]) / s
+    elif R[1, 1] > R[2, 2]:
+        s = 2.0 * np.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2])
+        w = (R[0, 2] - R[2, 0]) / s
+        x = (R[0, 1] + R[1, 0]) / s
+        y = 0.25 * s
+        z = (R[1, 2] + R[2, 1]) / s
+    else:
+        s = 2.0 * np.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1])
+        w = (R[1, 0] - R[0, 1]) / s
+        x = (R[0, 2] + R[2, 0]) / s
+        y = (R[1, 2] + R[2, 1]) / s
+        z = 0.25 * s
+    return np.array([x, y, z, w])
 
 class OculusReaderNode(Node):
     def __init__(self):
@@ -15,14 +45,14 @@ class OculusReaderNode(Node):
 
     def timer_callback(self):
         transformations, buttons = self.oculus_reader.get_transformations_and_buttons()
-        if 'r' not in transformations:
+        if not transformations:
             return
-        right_controller_pose = transformations['r']
-        left_controller_pose = transformations['l']
-        self.publish_transform(right_controller_pose, 'oculus_r')
-        self.publish_transform(left_controller_pose, 'oculus_l')
-        self.get_logger().info(f'transformations: {transformations}')
-        self.get_logger().info(f'buttons: {buttons}')
+        if 'r' in transformations:
+            self.publish_transform(transformations['r'], 'oculus_r')
+        if 'l' in transformations:
+            self.publish_transform(transformations['l'], 'oculus_l')
+        if buttons:
+            self.get_logger().info(f'buttons: {buttons}', throttle_duration_sec=1.0)
 
     def publish_transform(self, transform, name):
         translation = transform[:3, 3]
