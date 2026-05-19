@@ -19,98 +19,78 @@ Until the hardware is secured, please create issues if the software does not beh
 
 ## Quick start
 
-System prerequisites (one-time):
+This package is intended to run inside the MoveIt Pro dev container, where ROS 2, `moveit_pro_controllers_msgs`, and the rest of the MoveIt Pro stack are already available. The container is the only supported environment.
+
+### Clone
+
+Clone into your `src/` workspace directory on the host. Git LFS is required to pull the APK:
 
 ```bash
-sudo apt install git-lfs android-tools-adb
-git lfs install
-```
-
-Clone (with the APK pulled correctly via Git LFS) and install into a local venv:
-
-```bash
+sudo apt install git-lfs           # if you don't already have it
+git lfs install                    # once per user account
+cd ~/picknik/workspaces/moveit_pro_example_ws/src
 git clone git@github.com:PickNikRobotics/oculus_reader.git
-cd oculus_reader
-./install.sh
 ```
-
-`install.sh` creates `.venv/` with `--system-site-packages` (so the venv can also see ROS 2 packages when ROS is sourced), installs the Python dependencies, installs `oculus_reader` in editable mode, smoke-tests the imports, and warns if `adb` is missing. Flags: `--venv <path>`, `--no-venv`, `--recreate`, `--help`.
-
-### Activating the venv
-
-```bash
-source enter_venv.sh           # just the venv
-source enter_venv.sh --ros     # also source /opt/ros/${ROS_DISTRO:-humble}/setup.bash
-```
-
-`enter_venv.sh` must be sourced (it modifies the current shell). It locates the venv next to itself, so it works from any cwd. Exit with `deactivate`.
-
-For ROS 2 use, **always source ROS before activating the venv** — the helper does this in the correct order when called with `--ros`.
-
-### Quest-side setup
-
-1. Enable Developer Mode for your Quest (via the Meta Quest mobile app: Settings → device → More Settings → Developer Mode). You'll need a Meta dev organization (free: <https://developer.oculus.com/manage/organizations/create/>).
-2. Connect the Quest via USB-C and wear it.
-3. Approve **Allow USB Debugging** + **Always allow from this computer** when prompted in the headset.
-4. Verify: `adb devices` should list your headset.
-
-### Running
-
-Stream controller poses to the terminal:
-
-```bash
-source enter_venv.sh
-python oculus_reader/reader.py
-```
-
-Publish controller poses as TF frames (`world` → `oculus_r` / `oculus_l`) for visualization in RViz2:
-
-```bash
-source enter_venv.sh --ros
-python oculus_reader/visualize_oculus_transforms_ros2.py
-```
-
-Then in another ROS-sourced terminal (same `ROS_DOMAIN_ID` and `ROS_DISTRO`):
-
-```bash
-rviz2     # add a TF display, fixed frame = world
-```
-
-**Note**: the Quest's proximity sensor suspends the teleop APK when nobody is wearing the headset. If `ros2 topic echo /tf` shows nothing, first check that the publisher terminal is logging non-empty `buttons: {...}` — if it's silent, put the headset on (or defeat the prox sensor).
-
-## Teleoperation
-
-`oculus_reader/teleoperate.py` plus `launch/teleoperate.launch.py` provide a full clutched-VR-teleop pipeline: the Quest controllers are mapped onto two TF reference frames; while the grip is held, the node also publishes a Cartesian velocity command that drives the robot's end effector toward the reference.
-
-Because the velocity command uses the custom `moveit_pro_controllers_msgs/msg/VelocityForceCommand` type, **this part of the pipeline is intended to run inside the MoveIt Pro dev container** (where that message package is built and on PYTHONPATH).
 
 ### One-time container setup
 
-Inside the container, `oculus_reader` needs `adb` plus a few small pip packages (`pure-python-adb`, `numpy`, `pyyaml`). The container is already the isolation boundary, so these are installed system-wide -- no venv. Run once per container build:
+Inside the container, `oculus_reader` needs `adb` plus a few small pip packages (`pure-python-adb`, `numpy`, `pyyaml`). The container is the isolation boundary, so these are installed system-wide -- no venv. Run once per container build:
 
 ```bash
+cd /home/studio-user/user_ws/src/oculus_reader
 bash container_install.sh
 ```
 
-The script auto-elevates with sudo if needed, is idempotent (safe to re-run), and verifies the imports at the end. If you maintain the dev container image, you can equivalently fold its contents into the Dockerfile so the deps are baked in.
+The script auto-elevates with `sudo` if needed, is idempotent (safe to re-run), and verifies the imports at the end. If you maintain the dev container image, you can equivalently fold its contents into the Dockerfile so the deps are baked in.
 
 ### Build
 
 `oculus_reader` is an `ament_python` package (see `package.xml`, `setup.cfg`, `setup.py`, `resource/oculus_reader`). Build with colcon:
 
 ```bash
-cd /home/studio-user/user_ws        # path inside the dev container
+cd /home/studio-user/user_ws
 colcon build --packages-select oculus_reader
 source install/setup.bash
 ```
 
-After that, `ros2 launch` and `ros2 run` both work in any terminal that sources the overlay -- no venv activation, no extra setup:
+After that, `ros2 launch` and `ros2 run` work in any terminal that sources the overlay:
 
 ```bash
 ros2 launch oculus_reader teleoperate.launch.py
 # or, directly:
 ros2 run oculus_reader teleoperate
 ```
+
+### Quest-side setup
+
+1. Enable Developer Mode for your Quest (via the Meta Quest mobile app: Settings → device → More Settings → Developer Mode). You'll need a Meta dev organization (free: <https://developer.oculus.com/manage/organizations/create/>).
+2. Connect the Quest via USB-C and wear it.
+3. Approve **Allow USB Debugging** + **Always allow from this computer** when prompted in the headset.
+4. Verify: `adb devices` (run inside the container) should list your headset.
+
+### Smoke-test tools (optional)
+
+Two small standalone scripts are useful for debugging the controller link without running the full teleop:
+
+```bash
+# Stream raw controller poses + buttons to the terminal.
+ros2 run oculus_reader reader
+
+# Publish controller poses as TF frames (world -> oculus_r / oculus_l) for RViz2.
+python3 /home/studio-user/user_ws/src/oculus_reader/oculus_reader/visualize_oculus_transforms_ros2.py
+```
+
+In another terminal:
+
+```bash
+rviz2     # add a TF display, fixed frame = world
+```
+
+**Note**: the Quest's proximity sensor suspends the teleop APK when nobody is wearing the headset. If `ros2 topic echo /tf` shows nothing, first check that the publisher terminal is logging non-empty `buttons: {...}` -- if it's silent, put the headset on (or defeat the prox sensor).
+
+## Teleoperation
+
+`oculus_reader/teleoperate.py` plus `launch/teleoperate.launch.py` provide a full clutched-VR-teleop pipeline: the Quest controllers are mapped onto two TF reference frames; while the grip is held, the node also publishes a Cartesian velocity command that drives the robot's end effector toward the reference, and the analog trigger commands the gripper.
 
 ### What gets published
 
